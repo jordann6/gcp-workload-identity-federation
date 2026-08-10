@@ -24,14 +24,23 @@ terraform {
   }
 }
 
+# billing_project plus user_project_override is required when applying with user
+# credentials (`gcloud auth application-default login`) rather than a service
+# identity. Without it, APIs that demand a quota project, orgpolicy and
+# serviceusage among them, bill the request to Google's shared OAuth client
+# project and fail with SERVICE_DISABLED on a project ID you do not recognize.
 provider "google" {
-  project = var.project_id
-  region  = var.region
+  project               = var.project_id
+  region                = var.region
+  billing_project       = var.project_id
+  user_project_override = true
 }
 
 provider "google-beta" {
-  project = var.project_id
-  region  = var.region
+  project               = var.project_id
+  region                = var.region
+  billing_project       = var.project_id
+  user_project_override = true
 }
 
 # Only used when enable_aws_leg is true. Terraform still requires the provider

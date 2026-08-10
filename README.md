@@ -61,7 +61,22 @@ Use direct access by default. Reach for impersonation when you need an identity 
 
 ## Deploy
 
-Requires an existing GCP organization, an open billing account, and `roles/resourcemanager.projectCreator` plus `roles/billing.user`.
+Requires an existing GCP organization and an open billing account, plus four org-level roles. Three of them are not obvious, and each one was discovered by an apply failing:
+
+| Role | Needed for | Note |
+|---|---|---|
+| `resourcemanager.projectCreator` | Creating both projects | |
+| `billing.user` | Linking billing | |
+| `resourcemanager.folderAdmin` | Creating and deleting the folder | `organizationAdmin` does **not** include `folders.create`. It administers IAM policy, it does not create hierarchy |
+| `orgpolicy.policyAdmin` | The two key constraints | Also not part of `organizationAdmin` |
+
+**If you apply with user credentials** from `gcloud auth application-default login`, set a quota project first:
+
+```bash
+gcloud auth application-default set-quota-project <workload-project-id>
+```
+
+User ADC has no quota project by default, so APIs that require one, `orgpolicy` and `serviceusage` among them, bill the call to Google's shared OAuth client project and fail with `SERVICE_DISABLED` on a project ID you have never seen. The provider blocks set `billing_project` and `user_project_override` to handle this, but the quota project still has to exist on the credential.
 
 ```bash
 # 1. Bootstrap. Local state, because this layer creates the state bucket.
@@ -86,6 +101,8 @@ To include the cross-cloud legs, set `enable_aws_leg = true` and have AWS creden
 
 Five checks. The last two are the ones worth running, because they prove a control by failing.
 
+Checks 4 and 5 below were run against live infrastructure on 2026-08-10 and are reproduced in the deploy record at the end of this file. Checks 1 through 3 require the repository to be on GitHub, since they need GitHub's OIDC issuer to mint a token.
+
 **1. Federation works with no key.** Run the `WIF demo` workflow, passing the Terraform outputs as inputs. `gcloud auth list` in the job prints a `principal://` identity rather than a service account.
 
 **2. The secret is readable through the federated principal.** The same job reads the CMEK-encrypted secret with no service account in the path.
@@ -101,7 +118,9 @@ gcloud iam service-accounts keys create /tmp/should-not-exist.json \
   --iam-account="gh-deployer@${PROJECT_ID}.iam.gserviceaccount.com"
 ```
 
-Expect `FAILED_PRECONDITION`, with the constraint named in the error. Run it as an owner. It still fails, which is the point.
+Expect `FAILED_PRECONDITION`, with `constraints/iam.disableServiceAccountKeyCreation` named in the violation. Run it as an owner. It still fails, which is the point.
+
+Note that gcloud creates the output file before it calls the API, so the path exists afterwards as a 0-byte file. That is a client artifact, not a key. Check the size, not the presence.
 
 ## Anti-pattern, and why the condition matters
 
@@ -164,11 +183,32 @@ Three GCP behaviors to expect:
 
 **A KMS key ring cannot be deleted, ever.** Destroy removes it from state and leaves the ring in the project. Key versions are scheduled for destruction rather than deleted. An empty key ring costs nothing.
 
-**Deleted projects are recoverable for 30 days and their IDs are never reusable.** Project IDs here carry a random suffix so a rebuild does not collide.
+**Deleted projects are recoverable for 30 days and their IDs are never reusable.** They stay visible in `gcloud projects list` in `DELETE_REQUESTED` state for that window, which looks like a failed teardown and is not one. Confirm the state and the billing link rather than the absence of the row. Project IDs here carry a random suffix so a rebuild does not collide.
+
+**The KMS key ring survives a normal destroy, but not a project deletion.** Destroying only the root module leaves an empty key ring behind, costing nothing. Destroying the bootstrap layer takes the whole project with it, key ring included.
 
 After destroy, confirm nothing is left:
 
 ```bash
-gcloud projects list --filter="labels.project=gcp-wif"
-gcloud resource-manager folders list --organization="${ORG_ID}"
+gcloud projects describe <project-id> --format="value(lifecycleState)"   # DELETE_REQUESTED
+gcloud billing projects describe <project-id> --format="value(billingEnabled)"  # False
+gcloud resource-manager folders list --organization="${ORG_ID}"          # empty
 ```
+
+## Deploy record
+
+Built, deployed, validated, and destroyed on 2026-08-10 against organization `jordandn13-org`.
+
+| Step | Result |
+|---|---|
+| Bootstrap apply | 19 resources. Folder, two projects, state bucket, log bucket, audit configs |
+| Federation apply | 22 resources. Pool, provider, bindings, CMEK chain, two org policies |
+| Attribute condition live | Pinned to owner and repository, confirmed on the deployed provider |
+| Org policies live | Both constraints returned `enforce = True` |
+| Default networks | Zero in both projects |
+| Secret encryption | Secret bound to the customer-managed key, confirmed via API |
+| Key creation as owner | Refused, `constraints/iam.disableServiceAccountKeyCreation` |
+| Teardown | 22 then 20 resources destroyed. Folder gone, buckets gone, both projects `DELETE_REQUESTED` with billing unlinked |
+| Cost | Under $0.05 for the full cycle |
+
+Four failures during the first apply, each fixed in code rather than worked around: `organizationAdmin` lacking `folders.create`, `organizationAdmin` lacking org policy administration, user ADC billing API calls to Google's shared OAuth project, and the Secret Manager service agent not existing yet when the KMS grant referenced it (resolves on retry, it is propagation lag).
