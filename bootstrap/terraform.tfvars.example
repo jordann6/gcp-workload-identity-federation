@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored because
+# both values identify real billing and org resources.
+
+# gcloud organizations list
+org_id = "000000000000"
+
+# gcloud billing accounts list
+billing_account = "000000-000000-000000"
+
+# Optional. Defaults shown.
+# folder_name = "platform"
+# name_prefix = "jn-wif"
+# region      = "us-central1"
+
+# Set true only for the final teardown, when the state bucket should be
+# deleted along with the objects in it.
+force_destroy_state = false

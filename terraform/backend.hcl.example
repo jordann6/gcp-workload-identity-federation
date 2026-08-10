@@ -1,0 +1,5 @@
+# Copy to backend.hcl using the bootstrap layer's backend_hcl output, then:
+#   terraform init -backend-config=backend.hcl
+
+bucket = "jn-wif-boot-a1b2c3-tfstate"
+prefix = "wif/dev"

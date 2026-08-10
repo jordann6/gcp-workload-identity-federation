@@ -1,0 +1,91 @@
+name: WIF demo
+
+# Proof that the federation works, run by the thing being federated.
+#
+# There is no GCP credential anywhere in this repository, in these workflows, or
+# in repository secrets. `google-github-actions/auth` requests an OIDC token
+# from GitHub, GCP's STS validates it against the pool provider, and returns a
+# short-lived access token. Nothing here is reusable after the job ends.
+
+on:
+  workflow_dispatch:
+    inputs:
+      workload_identity_provider:
+        description: "Full provider resource name (terraform output workload_identity_provider)"
+        required: true
+      bucket:
+        description: "Artifacts bucket (terraform output artifacts_bucket)"
+        required: true
+      secret_id:
+        description: "Secret to read (terraform output demo_secret_id)"
+        required: true
+      project_id:
+        description: "Workload project ID"
+        required: true
+      deployer_service_account:
+        description: "Service account for the impersonation comparison (terraform output deployer_service_account)"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # Required. Without it GitHub will not mint an OIDC token.
+
+jobs:
+  # Path 1: no service account anywhere. The federated principal itself holds
+  # the IAM roles.
+  direct-access:
+    name: Direct resource access
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (no service account)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.workload_identity_provider }}
+          project_id: ${{ inputs.project_id }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Confirm the identity is the federated principal, not a service account
+        run: gcloud auth list
+
+      - name: Read the CMEK-encrypted secret
+        run: |
+          gcloud secrets versions access latest \
+            --secret="${{ inputs.secret_id }}" \
+            --project="${{ inputs.project_id }}" > /dev/null
+          echo "Secret read succeeded with no service account in the path."
+
+      - name: List the artifacts bucket
+        run: gcloud storage ls "gs://${{ inputs.bucket }}"
+
+      - name: Write is expected to fail on a non-deploy ref
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo test > probe.txt
+          if gcloud storage cp probe.txt "gs://${{ inputs.bucket }}/probe.txt" 2>/dev/null; then
+            echo "::error::Write succeeded from a non-deploy ref. The ref-scoped binding is not holding."
+            exit 1
+          fi
+          echo "Write refused as expected. Write access is bound to the deploy ref only."
+
+  # Path 2: same token, exchanged for a service account instead. Built to be
+  # compared against path 1, not because it is needed here.
+  impersonation:
+    name: Service account impersonation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP (impersonating a service account)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.workload_identity_provider }}
+          service_account: ${{ inputs.deployer_service_account }}
+          project_id: ${{ inputs.project_id }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Confirm the identity is now the service account
+        run: gcloud auth list

@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in from the bootstrap layer output.
+# terraform.tfvars is gitignored because these values identify a real project.
+
+project_id     = "jn-wif-work-a1b2c3"
+project_number = "123456789012"
+
+# Repository allowed to federate. Enforced in the provider attribute condition.
+github_owner = "jordann6"
+github_repo  = "jordann6/gcp-workload-identity-federation"
+
+# Ref allowed to hold write access.
+github_deploy_ref = "refs/heads/main"
+
+# Cross-cloud legs. Requires AWS credentials in the environment at apply time.
+enable_aws_leg = false
+# aws_account_id = "123456789012"

@@ -1,0 +1,22 @@
+name: Guardrails
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Shared static gates: gitleaks, fmt, validate, lock file, tflint, Checkov,
+  # Trivy config, and the OPA policy suite. Every one of them blocks on failure.
+  static:
+    uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
+    with:
+      terraform_dir: terraform
+
+  bootstrap:
+    uses: jordann6/platform-guardrails/.github/workflows/tf-ci.yml@v1
+    with:
+      terraform_dir: bootstrap
