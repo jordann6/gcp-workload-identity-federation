@@ -6,6 +6,13 @@ Four federation paths are built side by side so the trade-offs between them are 
 
 ![Architecture](docs/architecture.png)
 
+Green paths are allowed, red ones are refused. A GitHub token from this
+repository exchanges for short-lived access; a fork or any other repository is
+refused by the provider's attribute condition. AWS calls in through its own
+pool, and GCP calls out to AWS with an ID token. Nothing federated can reach the
+bootstrap project that holds state, and the org policy denies service account
+key creation to everyone, owners included.
+
 **Cost:** under $0.25 per month if left standing. **Teardown:** roughly five minutes, with three GCP-specific gotchas documented at the bottom.
 
 ## The security problem
@@ -58,6 +65,27 @@ Use direct access by default. Reach for impersonation when you need an identity 
 **No default VPC in either project.** The default network ships with permissive firewall rules, including SSH and RDP from anywhere, that nobody chose and few audit.
 
 **Data access audit logs on both projects.** Admin activity logging is always on and free. Data access logs are what actually answer "who read this secret," which is the question this project exists to make answerable.
+
+## What the first apply broke
+
+Four failures, each fixed in code rather than worked around:
+
+1. **`organizationAdmin` cannot create a folder.** It administers IAM policy on
+   the organization; it does not include `resourcemanager.folders.create`. The
+   deployer needs `folderAdmin` as well.
+2. **`organizationAdmin` cannot set org policy either.** The two key
+   constraints need `orgpolicy.policyAdmin`.
+3. **User credentials billed API calls to a project nobody owns.** Application
+   default credentials from `gcloud auth` have no quota project, so `orgpolicy`
+   and `serviceusage` calls went to Google's shared OAuth client project and
+   failed with `SERVICE_DISABLED` on an unfamiliar project ID. Both providers
+   now set `billing_project` and `user_project_override`.
+4. **The Secret Manager service agent did not exist yet.** The KMS grant
+   referenced it before Google had created it. That one is propagation lag and
+   resolves on retry.
+
+The first two are the useful lesson: the role that sounds like it owns the
+organization is an IAM role, not a hierarchy or policy role.
 
 ## Deploy
 
@@ -211,4 +239,4 @@ Built, deployed, validated, and destroyed on 2026-08-10 against organization `jo
 | Teardown | 22 then 20 resources destroyed. Folder gone, buckets gone, both projects `DELETE_REQUESTED` with billing unlinked |
 | Cost | Under $0.05 for the full cycle |
 
-Four failures during the first apply, each fixed in code rather than worked around: `organizationAdmin` lacking `folders.create`, `organizationAdmin` lacking org policy administration, user ADC billing API calls to Google's shared OAuth project, and the Secret Manager service agent not existing yet when the KMS grant referenced it (resolves on retry, it is propagation lag).
+The four failures from the first apply are in [What the first apply broke](#what-the-first-apply-broke).
