@@ -8,7 +8,7 @@ Four federation paths are built side by side so the trade-offs between them are 
 
 Green paths are allowed, red ones are refused. A GitHub token from this
 repository exchanges for short-lived access; a fork or any other repository is
-refused by the provider's attribute condition. AWS calls in through the same
+refused by the provider's attribute condition. AWS calls in through its own
 pool, and GCP calls out to AWS with an ID token. Nothing federated can reach the
 bootstrap project that holds state, and the org policy denies service account
 key creation to everyone, owners included.
